@@ -267,6 +267,14 @@ def _normalize_party_token(val: str) -> str:
     return normalize_header_token(val)
 
 
+def _get_row_field(col_map: dict[int, str], row: list[str], canon: str) -> str:
+    """Return trimmed cell text for the mapped canonical column, or empty string."""
+    for c_i, c_name in col_map.items():
+        if c_name == canon and c_i < len(row):
+            return row[c_i].strip()
+    return ""
+
+
 def normalize_table(
     table: RawSheetTable,
 ) -> tuple[list[NormalizedRecord], list[AuditIssue], int, dict[str, str]]:
@@ -298,18 +306,12 @@ def normalize_table(
         if not any(cell.strip() for cell in row):
             continue
 
-        def get_field(canon: str) -> str:
-            for c_i, c_name in col_map.items():
-                if c_name == canon and c_i < len(row):
-                    return row[c_i].strip()
-            return ""
-
-        raw_belge = get_field("belge_no")
-        raw_taraf = get_field("taraf")
-        raw_tarih = get_field("tarih")
-        raw_vergi = get_field("vergi_no")
-        raw_aciklama = get_field("aciklama")
-        raw_pb = get_field("para_birimi")
+        raw_belge = _get_row_field(col_map, row, "belge_no")
+        raw_taraf = _get_row_field(col_map, row, "taraf")
+        raw_tarih = _get_row_field(col_map, row, "tarih")
+        raw_vergi = _get_row_field(col_map, row, "vergi_no")
+        raw_aciklama = _get_row_field(col_map, row, "aciklama")
+        raw_pb = _get_row_field(col_map, row, "para_birimi")
 
         footer_tokens = {
             normalize_header_token(v)
@@ -324,7 +326,13 @@ def normalize_table(
         row_status = "Geçti"
         belge_label = raw_belge or f"SATIR-{excel_row_num}"
 
-        def flag(severity: str, code: str, msg: str) -> None:
+        def flag(
+            severity: str,
+            code: str,
+            msg: str,
+            _row_num: int = excel_row_num,
+            _doc_label: str = belge_label,
+        ) -> None:
             nonlocal row_status
             issues.append(
                 AuditIssue(
@@ -332,8 +340,8 @@ def normalize_table(
                     code=code,
                     source_file=table.source_file,
                     sheet_name=table.sheet_name,
-                    source_row=excel_row_num,
-                    belge_no=belge_label,
+                    source_row=_row_num,
+                    belge_no=_doc_label,
                     message=msg,
                 )
             )
@@ -368,12 +376,15 @@ def normalize_table(
 
         detected_currency: Optional[str] = None
 
-        def parse_money_field(canon: str) -> tuple[Optional[Decimal], bool]:
+        def parse_money_field(
+            canon: str,
+            _row: list[str] = row,
+        ) -> tuple[Optional[Decimal], bool]:
             nonlocal detected_currency
             present = canon in col_map.values()
             if not present:
                 return None, False
-            val_str = get_field(canon)
+            val_str = _get_row_field(col_map, _row, canon)
             val, meta = parse_decimal_amount(val_str)
             if val is None:
                 flag("Hata", "TUTAR_FORMAT_HATASI", f"{canon}: {meta}")
