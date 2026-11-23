@@ -161,6 +161,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "cli_inputs_help": "Birleştirilecek .xlsx/.csv/.tsv dosya veya klasörleri.",
         "cli_output_help": "Çıktı .xlsx dosya yolu.",
         "cli_json_help": "İsteğe bağlı JSON özet çıktı yolu.",
+        "cli_csv_help": "İsteğe bağlı CWE-1236 korumalı temiz CSV çıkış yolu.",
         "cli_sheet_help": ".xlsx dosyalarında yalnızca belirtilen sayfa adını oku.",
         "cli_keep_dups_help": "Birebir mükerrerleri çıkarma.",
         "cli_fail_err_help": "Kritik hata (durum=Hata) varsa çıkış kodunu 2 yap.",
@@ -225,6 +226,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "cli_inputs_help": "Input .xlsx/.csv/.tsv files or folders to consolidate.",
         "cli_output_help": "Output .xlsx workbook path.",
         "cli_json_help": "Optional JSON summary output path.",
+        "cli_csv_help": "Optional CWE-1236 sanitized clean CSV output path.",
         "cli_sheet_help": "Read only the specified sheet name from .xlsx files.",
         "cli_keep_dups_help": "Do not exclude exact duplicate rows.",
         "cli_fail_err_help": "Exit with status code 2 when critical errors are detected.",
@@ -294,7 +296,7 @@ def validate_lang(lang: str) -> str:
 
 
 def t(lang: str, key: str, **kwargs: Any) -> str:
-    """Return a localized and formatted message for the given language and key."""
+    """Return a localized and formatted message string for the given language and key."""
     active = validate_lang(lang)
     template = MESSAGES[active][key]
     return template.format(**kwargs) if kwargs else template

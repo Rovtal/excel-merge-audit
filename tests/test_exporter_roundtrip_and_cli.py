@@ -1,5 +1,6 @@
 """End-to-end round-trip .xlsx XML verification, CWE-1236 safety, and CLI exit code tests."""
 
+import csv
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -184,3 +185,41 @@ class ExporterRoundTripAndCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as bad_lang_ctx:
                 main(["demo", "--lang", "fr"])
             self.assertEqual(bad_lang_ctx.exception.code, 2)
+
+    def test_cli_version_and_sanitized_csv_export(self) -> None:
+        with self.assertRaises(SystemExit) as ver_ctx:
+            main(["--version"])
+        self.assertEqual(ver_ctx.exception.code, 0)
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            demo_en = tmp / "demo_en"
+            self.assertEqual(main(["demo", "--lang", "en", "--out-dir", str(demo_en)]), 0)
+            payload = json.loads((demo_en / "summary.json").read_text(encoding="utf-8"))
+
+            out_xlsx = tmp / "out.xlsx"
+            out_csv = tmp / "clean_en.csv"
+            rc = main(
+                [
+                    "merge",
+                    str(demo_en / "sample_inputs"),
+                    "-o",
+                    str(out_xlsx),
+                    "--csv-out",
+                    str(out_csv),
+                    "--lang",
+                    "en",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            self.assertTrue(out_csv.is_file())
+
+            with out_csv.open("r", encoding="utf-8", newline="") as fh:
+                rows = list(csv.reader(fh))
+            self.assertEqual(rows[0][0], "Source File")
+            self.assertEqual(rows[0][-1], "Status")
+            data_rows = rows[1:]
+            self.assertEqual(len(data_rows), payload["summary"]["kept_rows"])
+            gross_sum = sum((Decimal(r[10]) for r in data_rows), Decimal("0.00"))
+            self.assertEqual(gross_sum, Decimal(payload["summary"]["kept_brut_total"]))
+            self.assertTrue(any(cell.startswith("'=") and "CMD|" in cell for row in data_rows for cell in row))

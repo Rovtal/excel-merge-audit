@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 from typing import Optional
 
-from .exporter import export_merge_workbook
+from . import __version__
+from .exporter import export_clean_csv, export_merge_workbook
 from .i18n import DEMO_LAYOUT, SUPPORTED_LANGS, t, validate_lang
 from .merger import merge_and_audit
 from .models import MergeReport
@@ -66,6 +67,12 @@ def build_parser(lang: str = "tr") -> argparse.ArgumentParser:
         description=t(active_lang, "cli_desc"),
     )
     parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
         "--lang",
         choices=SUPPORTED_LANGS,
         default="tr",
@@ -77,6 +84,7 @@ def build_parser(lang: str = "tr") -> argparse.ArgumentParser:
     merge_p.add_argument("inputs", nargs="+", help=t(active_lang, "cli_inputs_help"))
     merge_p.add_argument("-o", "--output", required=True, help=t(active_lang, "cli_output_help"))
     merge_p.add_argument("--json", help=t(active_lang, "cli_json_help"))
+    merge_p.add_argument("--csv-out", dest="csv_out", help=t(active_lang, "cli_csv_help"))
     merge_p.add_argument("--sheet", help=t(active_lang, "cli_sheet_help"))
     merge_p.add_argument("--keep-duplicates", action="store_true", help=t(active_lang, "cli_keep_dups_help"))
     merge_p.add_argument("--fail-on-error", action="store_true", help=t(active_lang, "cli_fail_err_help"))
@@ -132,6 +140,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         xlsx_out = export_merge_workbook(report, Path(args.output), lang=active_lang)
         if args.json:
             _write_json(report, Path(args.json))
+        if args.csv_out:
+            export_clean_csv(report, Path(args.csv_out), lang=active_lang)
         _print_console_summary(report, xlsx_out, lang=active_lang)
 
         if args.fail_on_error and report.summary.error_rows > 0:

@@ -1,5 +1,7 @@
 # excel-merge-audit
 
+[![CI](https://github.com/Rovtal/excel-merge-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/Rovtal/excel-merge-audit/actions/workflows/ci.yml)
+
 Dil: [English](README.md) | **Türkçe**
 
 Birden fazla dağınık `.xlsx`, `.csv` ve `.tsv` tablosunu **%100 çevrimdışı** birleştiren, Türkçe/İngilizce sütun başlıklarını otomatik eşleyen, sayı/tarih formatlarını tekilleştiren, birebir ve çakışan mükerrer kayıtları yakalayan ve kuruş mutabakatlı Excel raporu üreten Python CLI aracı.
@@ -25,25 +27,25 @@ Standart Python ortamında (`venv` / `pip` sağlam ise):
 
 ```bash
 python -m pip install -e .
-excel-merge demo --out-dir demo_output
+excel-merge demo --lang en --out-dir demo_output
 ```
 
 Kurulum yapmadan doğrudan kaynak dizinden çalıştırmak için (PowerShell / Bash):
 
 ```powershell
-$env:PYTHONPATH="src"; python -m excel_merge_audit.cli demo --out-dir demo_output
+$env:PYTHONPATH="src"; python -m excel_merge_audit.cli demo --lang en --out-dir demo_output
 ```
 
 ```bash
-PYTHONPATH=src python -m excel_merge_audit.cli demo --out-dir demo_output
+PYTHONPATH=src python -m excel_merge_audit.cli demo --lang en --out-dir demo_output
 ```
 
 ## Kendi Dosyalarınızla Kullanım
 
-Kendi klasör ve dosyalarınızı birleştirmek için (`Hata` varsa exit code `2`; İngilizce çıktı için `--lang en`):
+Kendi klasör ve dosyalarınızı birleştirmek için (`Hata` varsa exit code `2`; CWE-1236 korumalı temiz CSV için `--csv-out`; İngilizce çıktı için `--lang en`):
 
 ```bash
-excel-merge merge ./dosyalar -o birlesik_rapor.xlsx --json ozet.json --fail-on-error
+excel-merge merge ./dosyalar -o birlesik_rapor.xlsx --json ozet.json --csv-out temiz.csv --fail-on-error
 ```
 
 ## Lisans

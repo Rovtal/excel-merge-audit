@@ -1,5 +1,7 @@
 # excel-merge-audit
 
+[![CI](https://github.com/Rovtal/excel-merge-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/Rovtal/excel-merge-audit/actions/workflows/ci.yml)
+
 Language: **English** | [Türkçe](README.tr.md)
 
 A **100% offline** Python CLI engine that consolidates heterogeneous `.xlsx`, `.csv`, and `.tsv` spreadsheets, auto-maps Turkish/English column schemas, normalizes mixed number and date formats, isolates exact and conflicting duplicate documents, and exports a formula-verified 4-sheet Excel reconciliation workbook.
@@ -40,10 +42,10 @@ PYTHONPATH=src python -m excel_merge_audit.cli demo --lang en --out-dir demo_out
 
 ## Merging Your Own Files
 
-Merge a folder or explicit list of files in English (`--lang en`) or Turkish (`--lang tr`, default for backward compatibility). Returns exit code `2` when `--fail-on-error` is enabled and critical errors are found:
+Merge a folder or explicit list of files in English (`--lang en`) or Turkish (`--lang tr`, default for backward compatibility). Use `--csv-out` to also export a CWE-1236 sanitized UTF-8 CSV of clean rows, and `--fail-on-error` to return exit code `2` when critical errors are found:
 
 ```bash
-excel-merge merge ./files -o merged_report.xlsx --json summary.json --lang en --fail-on-error
+excel-merge merge ./files -o merged_report.xlsx --json summary.json --csv-out clean.csv --lang en --fail-on-error
 ```
 
 Use `--sheet "Sheet1"` to target a single worksheet inside `.xlsx` workbooks, or `--keep-duplicates` to keep exact duplicates in the merged output.

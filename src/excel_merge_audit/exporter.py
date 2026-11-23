@@ -1,5 +1,6 @@
 """Styled formula-backed .xlsx exporter with CWE-1236 formula injection protection."""
 
+import csv
 from pathlib import Path
 from typing import Optional
 
@@ -217,4 +218,39 @@ def export_merge_workbook(
     finally:
         wb.close()
 
+    return resolved
+
+
+def export_clean_csv(
+    report: MergeReport,
+    output_path: Path,
+    lang: Optional[str] = None,
+) -> Path:
+    """Export deduplicated Clean_Merged records as CWE-1236 sanitized UTF-8 CSV."""
+    active_lang = validate_lang(lang or report.lang)
+    clean_headers = EXPORT_COPY[active_lang]["clean_headers"]
+    resolved = output_path.resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+
+    with resolved.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(clean_headers)
+        for rec in report.records:
+            writer.writerow(
+                [
+                    sanitize_excel_text(Path(rec.source_file).name),
+                    sanitize_excel_text(rec.sheet_name),
+                    rec.source_row,
+                    sanitize_excel_text(rec.tarih),
+                    sanitize_excel_text(rec.belge_no),
+                    sanitize_excel_text(rec.taraf),
+                    sanitize_excel_text(rec.vergi_no),
+                    sanitize_excel_text(rec.aciklama),
+                    f"{rec.net_tutar:.2f}",
+                    f"{rec.kdv_tutar:.2f}",
+                    f"{rec.brut_tutar:.2f}",
+                    sanitize_excel_text(rec.para_birimi),
+                    rec.durum,
+                ]
+            )
     return resolved
