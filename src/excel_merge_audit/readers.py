@@ -11,6 +11,7 @@ import zipfile
 
 from lxml import etree
 
+from .i18n import t, validate_lang
 from .models import RawSheetTable
 
 
@@ -32,11 +33,11 @@ SAFE_XML_PARSER = etree.XMLParser(
 )
 
 
-def _parse_xml_bytes(data: bytes, source_label: str) -> etree._Element:
+def _parse_xml_bytes(data: bytes, source_label: str, lang: str = "tr") -> etree._Element:
     try:
         return etree.fromstring(data, parser=SAFE_XML_PARSER)
     except etree.XMLSyntaxError as exc:
-        raise ValueError(f"{source_label}: Geçersiz veya güvenlik dışı XML içeriği ({exc}).") from exc
+        raise ValueError(t(lang, "reader_invalid_xml", source=source_label, exc=exc)) from exc
 
 
 def _col_letters_to_index(letters: str) -> int:
@@ -71,18 +72,18 @@ def _serial_to_iso_date(serial_val: float, use_1904: bool = False) -> Optional[s
     return target.isoformat()
 
 
-def _validate_zip_archive(zf: zipfile.ZipFile, file_name: str) -> None:
+def _validate_zip_archive(zf: zipfile.ZipFile, file_name: str, lang: str = "tr") -> None:
     infos = zf.infolist()
     if len(infos) > MAX_ZIP_ENTRIES:
-        raise ValueError(f"{file_name}: Arşiv çok fazla öğe içeriyor ({len(infos)}).")
+        raise ValueError(t(lang, "reader_zip_too_many", file_name=file_name, count=len(infos)))
     total_size = 0
     for info in infos:
         normalized = info.filename.replace("\\", "/")
         if normalized.startswith("/") or ".." in Path(normalized).parts:
-            raise ValueError(f"{file_name}: Güvenli olmayan arşiv yolu reddedildi ({info.filename}).")
+            raise ValueError(t(lang, "reader_zip_unsafe_path", file_name=file_name, member=info.filename))
         total_size += info.file_size
         if total_size > MAX_ZIP_UNCOMPRESSED_BYTES:
-            raise ValueError(f"{file_name}: Sıkıştırılmamış arşiv boyutu güvenlik sınırını aştı.")
+            raise ValueError(t(lang, "reader_zip_too_large", file_name=file_name))
 
 
 def _normalize_zip_target(target: str) -> str:
@@ -92,21 +93,29 @@ def _normalize_zip_target(target: str) -> str:
     return clean.lstrip("/")
 
 
-def _read_shared_strings(zf: zipfile.ZipFile, file_name: str = "sharedStrings.xml") -> list[str]:
+def _read_shared_strings(
+    zf: zipfile.ZipFile,
+    file_name: str = "sharedStrings.xml",
+    lang: str = "tr",
+) -> list[str]:
     if "xl/sharedStrings.xml" not in zf.namelist():
         return []
-    root = _parse_xml_bytes(zf.read("xl/sharedStrings.xml"), f"{file_name}:xl/sharedStrings.xml")
+    root = _parse_xml_bytes(zf.read("xl/sharedStrings.xml"), f"{file_name}:xl/sharedStrings.xml", lang=lang)
     values: list[str] = []
     for si in root.findall(f"{{{NS_SS}}}si"):
-        parts = [t.text or "" for t in si.iter(f"{{{NS_SS}}}t")]
+        parts = [t_el.text or "" for t_el in si.iter(f"{{{NS_SS}}}t")]
         values.append("".join(parts))
     return values
 
 
-def _read_date_style_indexes(zf: zipfile.ZipFile, file_name: str = "styles.xml") -> set[int]:
+def _read_date_style_indexes(
+    zf: zipfile.ZipFile,
+    file_name: str = "styles.xml",
+    lang: str = "tr",
+) -> set[int]:
     if "xl/styles.xml" not in zf.namelist():
         return set()
-    root = _parse_xml_bytes(zf.read("xl/styles.xml"), f"{file_name}:xl/styles.xml")
+    root = _parse_xml_bytes(zf.read("xl/styles.xml"), f"{file_name}:xl/styles.xml", lang=lang)
     custom_date_ids: set[int] = set()
     num_fmts = root.find(f"{{{NS_SS}}}numFmts")
     if num_fmts is not None:
@@ -135,8 +144,9 @@ def _parse_xlsx_worksheet(
     use_1904: bool,
     source_file: str,
     sheet_name: str,
+    lang: str = "tr",
 ) -> RawSheetTable:
-    root = _parse_xml_bytes(xml_bytes, f"{Path(source_file).name}:{sheet_name}")
+    root = _parse_xml_bytes(xml_bytes, f"{Path(source_file).name}:{sheet_name}", lang=lang)
     sheet_data = root.find(f"{{{NS_SS}}}sheetData")
     if sheet_data is None:
         return RawSheetTable(
@@ -158,7 +168,7 @@ def _parse_xlsx_worksheet(
         r_attr = row_el.get("r")
         seq_row = int(r_attr) if (r_attr and r_attr.isdigit()) else seq_row + 1
         max_row = max(max_row, seq_row)
-        cells = row_map.setdefault(seq_row, {})
+        row_map.setdefault(seq_row, {})
         seq_col = -1
 
         for c_el in row_el.findall(f"{{{NS_SS}}}c"):
@@ -189,7 +199,7 @@ def _parse_xlsx_worksheet(
             if cell_type == "inlineStr":
                 is_el = c_el.find(f"{{{NS_SS}}}is")
                 text_val = (
-                    "".join(t.text or "" for t in is_el.iter(f"{{{NS_SS}}}t"))
+                    "".join(t_el.text or "" for t_el in is_el.iter(f"{{{NS_SS}}}t"))
                     if is_el is not None
                     else ""
                 )
@@ -203,7 +213,7 @@ def _parse_xlsx_worksheet(
                     else:
                         text_val = raw_val
                 elif cell_type == "b":
-                    text_val = "DOĞRU" if raw_val == "1" else "YANLIŞ"
+                    text_val = t(lang, "reader_bool_true" if raw_val == "1" else "reader_bool_false")
                 elif cell_type == "e":
                     text_val = raw_val or "#ERROR!"
                     formula_errors.append((row_num, col_idx + 1, text_val))
@@ -252,29 +262,29 @@ def _parse_xlsx_worksheet(
 def read_xlsx_tables(
     file_path: Path,
     only_sheet: Optional[str] = None,
+    lang: str = "tr",
 ) -> list[RawSheetTable]:
     """Read sheets from an OpenXML .xlsx workbook without openpyxl/pandas."""
+    active_lang = validate_lang(lang)
     resolved = file_path.resolve()
     if resolved.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError(f"{resolved.name}: Dosya boyutu 50 MB sınırını aşıyor.")
+        raise ValueError(t(active_lang, "reader_file_too_large", file_name=resolved.name))
 
     with resolved.open("rb") as fh:
         header = fh.read(8)
     if header == OLE2_MAGIC:
-        raise ValueError(
-            f"{resolved.name}: Eski ikili .xls veya şifreli Office dosyası desteklenmiyor; .xlsx/.csv olarak kaydedin."
-        )
+        raise ValueError(t(active_lang, "reader_ole2_xlsx", file_name=resolved.name))
 
     if not zipfile.is_zipfile(resolved):
-        raise ValueError(f"{resolved.name}: Geçerli bir .xlsx arşivi değil.")
+        raise ValueError(t(active_lang, "reader_invalid_zip", file_name=resolved.name))
 
     with zipfile.ZipFile(resolved, "r") as zf:
-        _validate_zip_archive(zf, resolved.name)
+        _validate_zip_archive(zf, resolved.name, lang=active_lang)
         names = set(zf.namelist())
         if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
-            raise ValueError(f"{resolved.name}: Eksik çalışma kitabı yapısı (.xlsx bozuk).")
+            raise ValueError(t(active_lang, "reader_corrupt_xlsx", file_name=resolved.name))
 
-        wb_root = _parse_xml_bytes(zf.read("xl/workbook.xml"), f"{resolved.name}:xl/workbook.xml")
+        wb_root = _parse_xml_bytes(zf.read("xl/workbook.xml"), f"{resolved.name}:xl/workbook.xml", lang=active_lang)
         wb_pr = wb_root.find(f"{{{NS_SS}}}workbookPr")
         use_1904 = bool(
             wb_pr is not None and wb_pr.get("date1904", "").lower() in ("1", "true")
@@ -283,6 +293,7 @@ def read_xlsx_tables(
         rels_root = _parse_xml_bytes(
             zf.read("xl/_rels/workbook.xml.rels"),
             f"{resolved.name}:xl/_rels/workbook.xml.rels",
+            lang=active_lang,
         )
         rel_map: dict[str, str] = {}
         for rel in rels_root.findall(f"{{{NS_REL_PKG}}}Relationship"):
@@ -291,8 +302,8 @@ def read_xlsx_tables(
             if rid and target:
                 rel_map[rid] = _normalize_zip_target(target)
 
-        shared_strings = _read_shared_strings(zf, resolved.name)
-        date_xfs = _read_date_style_indexes(zf, resolved.name)
+        shared_strings = _read_shared_strings(zf, resolved.name, lang=active_lang)
+        date_xfs = _read_date_style_indexes(zf, resolved.name, lang=active_lang)
 
         tables: list[RawSheetTable] = []
         sheets_el = wb_root.find(f"{{{NS_SS}}}sheets")
@@ -300,7 +311,7 @@ def read_xlsx_tables(
             return []
 
         for sheet_el in sheets_el.findall(f"{{{NS_SS}}}sheet"):
-            name = sheet_el.get("name") or "Sayfa"
+            name = sheet_el.get("name") or t(active_lang, "reader_default_sheet")
             if only_sheet and name != only_sheet:
                 continue
             rid = sheet_el.get(f"{{{NS_REL_ATTR}}}id")
@@ -316,19 +327,20 @@ def read_xlsx_tables(
                 use_1904=use_1904,
                 source_file=str(resolved),
                 sheet_name=name,
+                lang=active_lang,
             )
             tables.append(table)
 
     if only_sheet and not tables:
-        raise ValueError(f"{resolved.name}: Belirtilen '{only_sheet}' sayfası bulunamadı.")
+        raise ValueError(t(active_lang, "reader_missing_sheet", file_name=resolved.name, sheet=only_sheet))
     return tables
 
 
-def _decode_csv_bytes(raw_bytes: bytes, file_name: str) -> tuple[str, str]:
+def _decode_csv_bytes(raw_bytes: bytes, file_name: str, lang: str = "tr") -> tuple[str, str]:
     if raw_bytes.startswith(OLE2_MAGIC):
-        raise ValueError(f"{file_name}: İkili dosya .csv/.tsv olarak okunamaz.")
+        raise ValueError(t(lang, "reader_binary_csv", file_name=file_name))
     if raw_bytes.startswith(b"PK\x03\x04"):
-        raise ValueError(f"{file_name}: Arşiv/Excel içeriği .csv/.tsv uzantısına sahip; uzantıyı .xlsx yapın.")
+        raise ValueError(t(lang, "reader_zip_in_csv", file_name=file_name))
 
     candidates = ("utf-8-sig", "utf-8", "cp1254", "iso-8859-9", "cp1252")
     for enc in candidates:
@@ -339,7 +351,7 @@ def _decode_csv_bytes(raw_bytes: bytes, file_name: str) -> tuple[str, str]:
             return text, enc
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"{file_name}: Metin karakter seti çözülemedi.")
+    raise ValueError(t(lang, "reader_decode_failed", file_name=file_name))
 
 
 def _detect_delimiter(text: str, ext: str) -> str:
@@ -369,14 +381,15 @@ def _detect_delimiter(text: str, ext: str) -> str:
     return best_delim
 
 
-def read_delimited_table(file_path: Path) -> RawSheetTable:
+def read_delimited_table(file_path: Path, lang: str = "tr") -> RawSheetTable:
     """Read a CSV or TSV file with Turkish/UTF-8 encoding fallback and smart delimiter inference."""
+    active_lang = validate_lang(lang)
     resolved = file_path.resolve()
     if resolved.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError(f"{resolved.name}: Dosya boyutu 50 MB sınırını aşıyor.")
+        raise ValueError(t(active_lang, "reader_file_too_large", file_name=resolved.name))
 
     raw_bytes = resolved.read_bytes()
-    text, encoding = _decode_csv_bytes(raw_bytes, resolved.name)
+    text, encoding = _decode_csv_bytes(raw_bytes, resolved.name, lang=active_lang)
     delimiter = _detect_delimiter(text, resolved.suffix.lower())
     rows = [
         [cell.strip() for cell in row]
@@ -396,8 +409,10 @@ def read_delimited_table(file_path: Path) -> RawSheetTable:
 def load_input_tables(
     inputs: list[Path],
     only_sheet: Optional[str] = None,
+    lang: str = "tr",
 ) -> tuple[list[RawSheetTable], list[str]]:
     """Expand files/directories cleanly and load all supported .xlsx/.csv/.tsv tables."""
+    active_lang = validate_lang(lang)
     tables: list[RawSheetTable] = []
     ignored: list[str] = []
     seen_files: set[Path] = set()
@@ -406,7 +421,7 @@ def load_input_tables(
     for raw_item in inputs:
         p = raw_item.resolve()
         if not p.exists():
-            raise FileNotFoundError(f"Girdi yolu bulunamadı: {raw_item}")
+            raise FileNotFoundError(t(active_lang, "reader_missing_input", raw_item=raw_item))
         if p.is_dir():
             for child in sorted(p.rglob("*")):
                 if child.is_file():
@@ -420,19 +435,17 @@ def load_input_tables(
         seen_files.add(file_path)
 
         if file_path.name.startswith("~$"):
-            ignored.append(f"{file_path.name} (geçici kilit dosyası)")
+            ignored.append(t(active_lang, "reader_ignored_lock", file_name=file_path.name))
             continue
 
         suffix = file_path.suffix.lower()
         if suffix == ".xlsx":
-            tables.extend(read_xlsx_tables(file_path, only_sheet=only_sheet))
+            tables.extend(read_xlsx_tables(file_path, only_sheet=only_sheet, lang=active_lang))
         elif suffix in (".csv", ".tsv"):
-            tables.append(read_delimited_table(file_path))
+            tables.append(read_delimited_table(file_path, lang=active_lang))
         elif suffix == ".xls":
-            raise ValueError(
-                f"{file_path.name}: Eski ikili .xls formatı desteklenmiyor; dosyayı .xlsx veya .csv olarak kaydedin."
-            )
+            raise ValueError(t(active_lang, "reader_legacy_xls", file_name=file_path.name))
         else:
-            ignored.append(f"{file_path.name} (desteklenmeyen uzantı)")
+            ignored.append(t(active_lang, "reader_ignored_ext", file_name=file_path.name))
 
     return tables, ignored

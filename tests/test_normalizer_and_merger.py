@@ -74,3 +74,33 @@ class NormalizerAndMergerTests(unittest.TestCase):
             self.assertIn("TAM_MUKERRER_SILINDI", codes)
             self.assertIn("CAKISAN_BELGE", codes)
             self.assertIn("BILIMSEL_GOSTERIM_VKN", codes)
+
+    def test_english_localization_messages_and_statuses(self) -> None:
+        bad_val, bad_msg = parse_decimal_amount("#VALUE!", lang="en")
+        self.assertIsNone(bad_val)
+        self.assertIn("formula error", (bad_msg or "").lower())
+
+        _, date_err = parse_date_value("32.13.2026", lang="en")
+        self.assertIn("unrecognized date format", (date_err or "").lower())
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            csv_file = tmp / "en_input.csv"
+            csv_file.write_text(
+                "\n".join(
+                    [
+                        "Date,Document No,Counterparty,Subtotal,VAT,Gross Total",
+                        "2026-04-01,DOC-1,Acme Corp,100.00,20.00,120.00",
+                        "2026-04-01,DOC-1,Acme Corp,100.00,20.00,120.00",
+                        "2026-04-02,DOC-2,Beta LLC,50.00,10.00,75.00",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            report = merge_and_audit([csv_file], lang="en")
+            self.assertEqual(report.lang, "en")
+            self.assertEqual(report.summary.passed_rows, 1)
+            self.assertEqual(report.summary.error_rows, 1)
+            self.assertEqual({r.durum for r in report.records}, {"Passed", "Error"})
+            self.assertTrue(any(i.severity == "Warning" and "Exact duplicate" in i.message for i in report.issues))
+            self.assertTrue(any(i.severity == "Error" and "Net (" in i.message for i in report.issues))

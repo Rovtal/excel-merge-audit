@@ -116,3 +116,71 @@ class ExporterRoundTripAndCliTests(unittest.TestCase):
 
             missing_rc = main(["merge", str(tmp / "yok.csv"), "-o", str(out_xlsx)])
             self.assertEqual(missing_rc, 1)
+
+    def test_english_demo_and_merge_flag_order_and_formulas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            demo_dir = tmp / "demo_en"
+            rc = main(["demo", "--lang", "en", "--out-dir", str(demo_dir)])
+            self.assertEqual(rc, 0)
+
+            xlsx_path = demo_dir / "merged_audit_report.xlsx"
+            json_path = demo_dir / "summary.json"
+            self.assertTrue(xlsx_path.is_file())
+            self.assertTrue(json_path.is_file())
+
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["lang"], "en")
+            summary = payload["summary"]
+            self.assertEqual(summary["total_input_rows"], 9)
+            self.assertEqual(summary["exact_duplicates_removed"], 1)
+            self.assertEqual(summary["kept_rows"], 8)
+            self.assertEqual(summary["conflicting_documents"], 1)
+            self.assertEqual(
+                Decimal(summary["raw_brut_total"]) - Decimal(summary["duplicate_brut_removed"]),
+                Decimal(summary["kept_brut_total"]),
+            )
+            statuses = {rec["durum"] for rec in payload["records"]}
+            self.assertEqual(statuses, {"Passed", "Warning", "Error"})
+
+            with zipfile.ZipFile(xlsx_path, "r") as zf:
+                wb_xml = etree.fromstring(zf.read("xl/workbook.xml"), parser=SAFE_XML_PARSER)
+                sheet_names = [el.get("name") for el in wb_xml.findall(f".//{{{NS_SS}}}sheet")]
+                self.assertEqual(
+                    sheet_names,
+                    ["Merge_Summary", "Clean_Merged", "Source_Files", "Duplicates_and_Warnings"],
+                )
+
+                sum_xml = etree.fromstring(zf.read("xl/worksheets/sheet1.xml"), parser=SAFE_XML_PARSER)
+                formulas_by_ref = {}
+                for c in sum_xml.findall(f".//{{{NS_SS}}}c"):
+                    f_el = c.find(f"{{{NS_SS}}}f")
+                    if f_el is not None and f_el.text:
+                        formulas_by_ref[c.get("r")] = f_el.text
+
+                last_row = summary["kept_rows"] + 1
+                self.assertIn('COUNTIF(Clean_Merged!M2:M9,"Passed")', formulas_by_ref.get("B9", ""))
+                self.assertEqual(formulas_by_ref.get("B14"), f"SUM(Clean_Merged!I2:I{last_row})")
+                self.assertEqual(formulas_by_ref.get("B15"), f"SUM(Clean_Merged!J2:J{last_row})")
+                self.assertEqual(formulas_by_ref.get("B16"), f"SUM(Clean_Merged!K2:K{last_row})")
+                self.assertEqual(formulas_by_ref.get("B17"), "B12-B13-B16")
+
+            # Verify --lang before subcommand also works cleanly and --fail-on-error exits with 2
+            merge_out = tmp / "merged_en.xlsx"
+            rc_err = main(
+                [
+                    "--lang",
+                    "en",
+                    "merge",
+                    str(demo_dir / "sample_inputs"),
+                    "-o",
+                    str(merge_out),
+                    "--fail-on-error",
+                ]
+            )
+            self.assertEqual(rc_err, 2)
+            self.assertTrue(merge_out.is_file())
+
+            with self.assertRaises(SystemExit) as bad_lang_ctx:
+                main(["demo", "--lang", "fr"])
+            self.assertEqual(bad_lang_ctx.exception.code, 2)

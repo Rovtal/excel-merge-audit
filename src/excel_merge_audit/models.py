@@ -102,3 +102,4 @@ class MergeReport:
     summary: MergeSummary
     ignored_files: list[str] = field(default_factory=list)
     fatal_reason: Optional[str] = None
+    lang: str = "tr"

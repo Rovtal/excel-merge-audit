@@ -1,9 +1,11 @@
 """Styled formula-backed .xlsx exporter with CWE-1236 formula injection protection."""
 
 from pathlib import Path
+from typing import Optional
 
 import xlsxwriter
 
+from .i18n import EXPORT_COPY, SHEET_NAMES, STATUS_LABELS, validate_lang
 from .models import MergeReport
 
 
@@ -19,8 +21,19 @@ def sanitize_excel_text(value: str) -> str:
     return value
 
 
-def export_merge_workbook(report: MergeReport, output_path: Path) -> Path:
+def export_merge_workbook(
+    report: MergeReport,
+    output_path: Path,
+    lang: Optional[str] = None,
+) -> Path:
     """Generate a 4-sheet formatted and formula-verified .xlsx merge audit workbook."""
+    active_lang = validate_lang(lang or report.lang)
+    sheets = SHEET_NAMES[active_lang]
+    st = STATUS_LABELS[active_lang]
+    copy = EXPORT_COPY[active_lang]
+    metrics = copy["metrics"]
+    clean_sheet = sheets["clean"]
+
     resolved = output_path.resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
@@ -48,95 +61,79 @@ def export_merge_workbook(report: MergeReport, output_path: Path) -> Path:
         warn_fmt = wb.add_format({"bold": True, "font_color": "#92400E", "bg_color": "#FEF3C7", "border": 1, "align": "center"})
         err_fmt = wb.add_format({"bold": True, "font_color": "#991B1B", "bg_color": "#FEE2E2", "border": 1, "align": "center"})
 
-        # 1. Sheet: Ozet_Birlestirme
-        ws_sum = wb.add_worksheet("Ozet_Birlestirme")
+        # 1. Summary Sheet
+        ws_sum = wb.add_worksheet(sheets["summary"])
         ws_sum.hide_gridlines(2)
         ws_sum.set_column("A:A", 36)
         ws_sum.set_column("B:B", 22)
-        ws_sum.set_column("C:C", 42)
-        ws_sum.write(0, 0, "Çoklu Excel / CSV Birleştirme ve Denetim Özeti", title_fmt)
+        ws_sum.set_column("C:C", 46)
+        ws_sum.write(0, 0, copy["title"], title_fmt)
 
-        ws_sum.write(2, 0, "Özet Göstergesi", hdr_fmt)
-        ws_sum.write(2, 1, "Değer", hdr_fmt)
-        ws_sum.write(2, 2, "Açıklama / Doğrulama Kuralı", hdr_fmt)
+        for col_i, header_text in enumerate(copy["sum_headers"]):
+            ws_sum.write(2, col_i, header_text, hdr_fmt)
 
         last_rec_row = len(report.records) + 1
         sum_range_valid = last_rec_row >= 2
 
         row_map: dict[str, str] = {}
-        summary_rows = [
-            ("source_sheets", "Kaynak Tablo Sayısı", report.summary.source_sheets, num_int_fmt, "İşlenen sayfa ve CSV/TSV dosyaları"),
-            ("raw_rows", "Ham Girdi Satırı", report.summary.total_input_rows, num_int_fmt, "Mükerrer temizliği öncesi okunan veri satırı"),
+        summary_specs: list[tuple[str, object, object]] = [
+            ("source_sheets", report.summary.source_sheets, num_int_fmt),
+            ("raw_rows", report.summary.total_input_rows, num_int_fmt),
             (
                 "clean_rows",
-                "Temiz Birleştirilmiş Satır",
-                f'=COUNTIF(Temiz_Birlestirilmis!M2:M{last_rec_row},"<>")' if sum_range_valid else 0,
+                f'=COUNTIF({clean_sheet}!M2:M{last_rec_row},"<>")' if sum_range_valid else 0,
                 num_int_fmt,
-                "Temiz_Birlestirilmis sayfasındaki net kayıt adedi",
             ),
-            ("dup_rows", "Çıkarılan Birebir Mükerrer", report.summary.exact_duplicates_removed, num_int_fmt, "Mukerrer_ve_Uyarilar sayfasında listelenir"),
-            ("conflict_groups", "Çakışan Belge Grubu", report.summary.conflicting_documents, num_int_fmt, "Aynı belge numarasıyla farklı tutar/tarih içerenler"),
+            ("dup_rows", report.summary.exact_duplicates_removed, num_int_fmt),
+            ("conflict_groups", report.summary.conflicting_documents, num_int_fmt),
             (
                 "passed_rows",
-                "Durum: Geçti (En İyi)",
-                f'=COUNTIF(Temiz_Birlestirilmis!M2:M{last_rec_row},"Geçti")' if sum_range_valid else 0,
+                f'=COUNTIF({clean_sheet}!M2:M{last_rec_row},"{st["pass"]}")' if sum_range_valid else 0,
                 ok_fmt,
-                "Matematiksel ve format doğrulamasından geçen satırlar",
             ),
             (
                 "warning_rows",
-                "Durum: Uyarı",
-                f'=COUNTIF(Temiz_Birlestirilmis!M2:M{last_rec_row},"Uyarı")' if sum_range_valid else 0,
+                f'=COUNTIF({clean_sheet}!M2:M{last_rec_row},"{st["warn"]}")' if sum_range_valid else 0,
                 warn_fmt,
-                "Tarih, eksik alan veya bilimsel gösterim uyarısı alanlar",
             ),
             (
                 "error_rows",
-                "Durum: Hata (Kritik)",
-                f'=COUNTIF(Temiz_Birlestirilmis!M2:M{last_rec_row},"Hata")' if sum_range_valid else 0,
+                f'=COUNTIF({clean_sheet}!M2:M{last_rec_row},"{st["error"]}")' if sum_range_valid else 0,
                 err_fmt,
-                "Net+KDV uyumsuzluğu, çakışan belge veya #REF!/#DEĞER! hatası",
             ),
-            ("raw_brut", "Ham Girdi Brüt Toplam", float(report.summary.raw_brut_total), money_fmt, "Mükerrer temizliği öncesi brüt toplam"),
-            ("dup_brut", "Çıkarılan Mükerrer Brüt", float(report.summary.duplicate_brut_removed), money_fmt, "Silinen mükerrer satırların brüt toplamı"),
+            ("raw_brut", float(report.summary.raw_brut_total), money_fmt),
+            ("dup_brut", float(report.summary.duplicate_brut_removed), money_fmt),
             (
                 "clean_net",
-                "Temiz Net Toplam",
-                f"=SUM(Temiz_Birlestirilmis!I2:I{last_rec_row})" if sum_range_valid else 0.0,
+                f"=SUM({clean_sheet}!I2:I{last_rec_row})" if sum_range_valid else 0.0,
                 money_fmt,
-                "Temiz_Birlestirilmis sütun I toplamı",
             ),
             (
                 "clean_kdv",
-                "Temiz KDV Toplam",
-                f"=SUM(Temiz_Birlestirilmis!J2:J{last_rec_row})" if sum_range_valid else 0.0,
+                f"=SUM({clean_sheet}!J2:J{last_rec_row})" if sum_range_valid else 0.0,
                 money_fmt,
-                "Temiz_Birlestirilmis sütun J toplamı",
             ),
             (
                 "clean_brut",
-                "Temiz Brüt Toplam",
-                f"=SUM(Temiz_Birlestirilmis!K2:K{last_rec_row})" if sum_range_valid else 0.0,
+                f"=SUM({clean_sheet}!K2:K{last_rec_row})" if sum_range_valid else 0.0,
                 money_fmt,
-                "Mutabakat: Ham Brüt - Mükerrer Brüt eşit olmalıdır",
             ),
         ]
 
         start_row = 3
-        for idx, (key, _lbl, _val, _fmt, _desc) in enumerate(summary_rows):
+        for idx, (key, _val, _fmt) in enumerate(summary_specs):
             row_map[key] = f"B{start_row + idx + 1}"
 
-        summary_rows.append(
+        summary_specs.append(
             (
                 "recon_diff",
-                "Mutabakat Sapması",
                 f"={row_map['raw_brut']}-{row_map['dup_brut']}-{row_map['clean_brut']}",
                 money_fmt,
-                "Beklenen değer 0,00 (Ham - Çıkarılan - Temiz)",
             )
         )
 
-        for offset, (_key, lbl, val, val_fmt, desc) in enumerate(summary_rows, start=start_row):
+        for offset, (key, val, val_fmt) in enumerate(summary_specs, start=start_row):
+            lbl, desc = metrics[key]
             ws_sum.write_string(offset, 0, lbl, label_fmt)
             if isinstance(val, str) and val.startswith("="):
                 ws_sum.write_formula(offset, 1, val, val_fmt)
@@ -146,23 +143,9 @@ def export_merge_workbook(report: MergeReport, output_path: Path) -> Path:
                 ws_sum.write_number(offset, 1, float(val), val_fmt)
             ws_sum.write_string(offset, 2, desc, text_fmt)
 
-        # 2. Sheet: Temiz_Birlestirilmis
-        ws_clean = wb.add_worksheet("Temiz_Birlestirilmis")
-        clean_headers = [
-            "Kaynak Dosya",
-            "Sayfa",
-            "Kaynak Satır",
-            "Tarih",
-            "Belge No",
-            "Taraf",
-            "Vergi No",
-            "Açıklama",
-            "Net Tutar",
-            "KDV Tutar",
-            "Brüt Tutar",
-            "Para Birimi",
-            "Durum",
-        ]
+        # 2. Clean Merged Records Sheet
+        ws_clean = wb.add_worksheet(clean_sheet)
+        clean_headers = copy["clean_headers"]
         for c_i, h in enumerate(clean_headers):
             ws_clean.write_string(0, c_i, h, hdr_fmt)
         ws_clean.freeze_panes(1, 0)
@@ -173,7 +156,7 @@ def export_merge_workbook(report: MergeReport, output_path: Path) -> Path:
         for idx, width in enumerate(col_widths_clean):
             ws_clean.set_column(idx, idx, width)
 
-        status_fmt_map = {"Geçti": ok_fmt, "Uyarı": warn_fmt, "Hata": err_fmt}
+        status_fmt_map = {st["pass"]: ok_fmt, st["warn"]: warn_fmt, st["error"]: err_fmt}
         for r_idx, rec in enumerate(report.records, start=1):
             ws_clean.write_string(r_idx, 0, sanitize_excel_text(Path(rec.source_file).name), text_fmt)
             ws_clean.write_string(r_idx, 1, sanitize_excel_text(rec.sheet_name), text_fmt)
@@ -189,47 +172,33 @@ def export_merge_workbook(report: MergeReport, output_path: Path) -> Path:
             ws_clean.write_string(r_idx, 11, sanitize_excel_text(rec.para_birimi), text_fmt)
             ws_clean.write_string(r_idx, 12, rec.durum, status_fmt_map.get(rec.durum, text_fmt))
 
-        # 3. Sheet: Kaynak_Dosyalar
-        ws_src = wb.add_worksheet("Kaynak_Dosyalar")
-        src_headers = [
-            "Dosya",
-            "Sayfa",
-            "Biçim",
-            "Karakter Seti",
-            "Ayırıcı",
-            "Başlık Satırı",
-            "Ham Satır",
-            "Alınan Satır",
-            "Atlanan Mükerrer",
-            "Uyarı",
-            "Hata",
-            "Ham Brüt Toplam",
-            "Alınan Brüt Toplam",
-        ]
+        # 3. Source Files Sheet
+        ws_src = wb.add_worksheet(sheets["sources"])
+        src_headers = copy["source_headers"]
         for c_i, h in enumerate(src_headers):
             ws_src.write_string(0, c_i, h, hdr_fmt)
         ws_src.freeze_panes(1, 0)
         for idx, width in enumerate([26, 14, 10, 14, 10, 13, 12, 13, 17, 10, 10, 18, 18]):
             ws_src.set_column(idx, idx, width)
 
-        for r_idx, st in enumerate(report.source_stats, start=1):
-            ws_src.write_string(r_idx, 0, sanitize_excel_text(st.source_file), text_fmt)
-            ws_src.write_string(r_idx, 1, sanitize_excel_text(st.sheet_name), text_fmt)
-            ws_src.write_string(r_idx, 2, st.file_format.upper(), text_fmt)
-            ws_src.write_string(r_idx, 3, st.encoding, text_fmt)
-            ws_src.write_string(r_idx, 4, sanitize_excel_text(st.delimiter or "-"), text_fmt)
-            ws_src.write_number(r_idx, 5, st.header_row, num_int_fmt)
-            ws_src.write_number(r_idx, 6, st.raw_data_rows, num_int_fmt)
-            ws_src.write_number(r_idx, 7, st.kept_rows, num_int_fmt)
-            ws_src.write_number(r_idx, 8, st.duplicate_skipped, num_int_fmt)
-            ws_src.write_number(r_idx, 9, st.warning_count, num_int_fmt)
-            ws_src.write_number(r_idx, 10, st.error_count, num_int_fmt)
-            ws_src.write_number(r_idx, 11, float(st.raw_brut_sum), money_fmt)
-            ws_src.write_number(r_idx, 12, float(st.kept_brut_sum), money_fmt)
+        for r_idx, st_row in enumerate(report.source_stats, start=1):
+            ws_src.write_string(r_idx, 0, sanitize_excel_text(st_row.source_file), text_fmt)
+            ws_src.write_string(r_idx, 1, sanitize_excel_text(st_row.sheet_name), text_fmt)
+            ws_src.write_string(r_idx, 2, st_row.file_format.upper(), text_fmt)
+            ws_src.write_string(r_idx, 3, st_row.encoding, text_fmt)
+            ws_src.write_string(r_idx, 4, sanitize_excel_text(st_row.delimiter or "-"), text_fmt)
+            ws_src.write_number(r_idx, 5, st_row.header_row, num_int_fmt)
+            ws_src.write_number(r_idx, 6, st_row.raw_data_rows, num_int_fmt)
+            ws_src.write_number(r_idx, 7, st_row.kept_rows, num_int_fmt)
+            ws_src.write_number(r_idx, 8, st_row.duplicate_skipped, num_int_fmt)
+            ws_src.write_number(r_idx, 9, st_row.warning_count, num_int_fmt)
+            ws_src.write_number(r_idx, 10, st_row.error_count, num_int_fmt)
+            ws_src.write_number(r_idx, 11, float(st_row.raw_brut_sum), money_fmt)
+            ws_src.write_number(r_idx, 12, float(st_row.kept_brut_sum), money_fmt)
 
-        # 4. Sheet: Mukerrer_ve_Uyarilar
-        ws_iss = wb.add_worksheet("Mukerrer_ve_Uyarilar")
-        iss_headers = ["Önem", "Kod", "Kaynak Dosya", "Sayfa", "Satır", "Belge No", "Açıklama"]
+        # 4. Duplicates and Warnings Sheet
+        ws_iss = wb.add_worksheet(sheets["issues"])
+        iss_headers = copy["issue_headers"]
         for c_i, h in enumerate(iss_headers):
             ws_iss.write_string(0, c_i, h, hdr_fmt)
         ws_iss.freeze_panes(1, 0)

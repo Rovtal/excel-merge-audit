@@ -1,49 +1,62 @@
 # excel-merge-audit
 
-Birden fazla dağınık `.xlsx`, `.csv` ve `.tsv` tablosunu **%100 çevrimdışı** birleştiren, Türkçe/İngilizce sütun başlıklarını otomatik eşleyen, sayı/tarih formatlarını tekilleştiren, birebir ve çakışan mükerrer kayıtları yakalayan ve kuruş mutabakatlı Excel raporu üreten Python CLI aracı.
+Language: **English** | [Türkçe](README.tr.md)
 
-> Veri mahremiyeti gereği dosyalar dış ağa veya buluta gönderilmez. `openpyxl` veya `pandas` bağımlılığı gerektirmez; OpenXML `.xlsx` dosyalarını doğrudan güvenlik korumalı `zipfile + lxml` üzerinden okur, çıktıyı formüllü `XlsxWriter` dosyası olarak üretir.
+A **100% offline** Python CLI engine that consolidates heterogeneous `.xlsx`, `.csv`, and `.tsv` spreadsheets, auto-maps Turkish/English column schemas, normalizes mixed number and date formats, isolates exact and conflicting duplicate documents, and exports a formula-verified 4-sheet Excel reconciliation workbook.
 
-## Neleri Çözer?
+> Designed for strict local data privacy: spreadsheets never leave your machine. No `openpyxl` or `pandas` dependency is required; OpenXML `.xlsx` files are parsed directly via security-hardened `zipfile + lxml`, and workbooks are written with `XlsxWriter`.
 
-- **Bozuk Türkçe Karakter ve Ayırıcı Karmaşası:** `UTF-8`, `UTF-8 BOM`, `cp1254` (Türkçe Windows ANSI) ve `ISO-8859-9` dosyalarıyla `;`, `,`, `\t`, `|` ayırıcılarını otomatik çözer.
-- **Üst Başlık / Boşluk / Seyrek Hücreler:** Raporun ilk `1–15` satırındaki firma başlıklarını atlar, gerçek başlık satırını bulur; atlanmış boş XML hücrelerinde sütun kaydırmaz ve Excel `1900`/`1904` tarih seri numaralarını `YYYY-MM-DD` tarihine çevirir.
-- **Sıkı `Decimal` Para Ayrıştırma:** `1.250,50 TL`, `(412,50)` muhasebe eksisi ve `1,250.50 USD` biçimlerini kayıpsız kuruş hesabıyla (`Decimal`) okur; `Net + KDV = Brüt` tutarsızlıklarını `Hata` olarak işaretler.
-- **Mükerrer ve Çakışan Belge Yakalama:** Birebir tekrar satırları temizleyip çıkarılan tutarı mutabakat tablosunda gösterir; aynı belge numarası ve tarafla farklı tutar/tarihte gelen satırları **Çakışan Belge (`Hata`)** olarak yakalar.
-- **Güvenlik Kalkanları:** OpenXML **XXE**, **zip-slip (`../`)**, arşiv boyut sınırı ve Excel hücre formül enjeksiyonu (**CWE-1236** `=CMD|...`) korumalıdır.
+## What It Solves
 
-## Kapsam Sınırları (Net Beyan)
+- **Encoding & Delimiter Chaos:** Auto-detects `UTF-8`, `UTF-8 BOM`, `cp1254` (Turkish Windows ANSI), `ISO-8859-9`, and `cp1252` files with `;`, `,`, `\t`, and `|` delimiters.
+- **Top Banners, Sparse Cells & Serial Dates:** Scans rows `1–15` to locate real column headers, skips repeated `TOTAL` / `GRAND TOTAL` summary rows, prevents sparse OpenXML empty-cell column shifting, and converts Excel `1900`/`1904` serial dates to `YYYY-MM-DD`.
+- **Strict `Decimal` Monetary Parsing:** Parses `1.250,50 TL`, accounting negatives like `(412,50)`, and `1,250.50 USD` without floating-point drift; flags `Net + VAT != Gross` discrepancies as `Error`.
+- **Exact Duplicate & Conflicting Document Detection:** Removes exact duplicates while tracking excluded totals in the reconciliation sheet, and flags same-document rows with mismatched amounts or dates as `Error`.
+- **Security Hardening:** Guarded against OpenXML **XXE**, **zip-slip (`../`)**, archive entry/size bombs, and Excel formula injection (**CWE-1236** `=CMD|...`).
 
-- **Desteklenenler:** `.xlsx` (OpenXML), `.csv`, `.tsv` dosyaları.
-- **Kapsam Dışı:** Eski ikili `.xls` (`Excel 97-2003`) ve parola korumalı/şifreli `.xlsx` dosyaları bilerek reddedilir (kullanıcıdan `.xlsx` veya `.csv` olarak kaydetmesi istenir).
+## Scope Boundaries
 
-## Kurulum ve Çalıştırma
+- **Supported:** `.xlsx` (OpenXML), `.csv`, `.tsv` files and nested folders (temporary `~$` lock files are safely skipped).
+- **Out of Scope by Design:** Legacy binary `.xls` (`Excel 97-2003`) and password-protected/encrypted `.xlsx` files are intentionally rejected with a clear conversion prompt.
 
-Standart Python ortamında (`venv` / `pip` sağlam ise):
+## Installation & Quick Demo
+
+In a standard Python (`>=3.10`) environment:
 
 ```bash
 python -m pip install -e .
-excel-merge demo --out-dir demo_output
+excel-merge demo --lang en --out-dir demo_output
 ```
 
-Kurulum yapmadan doğrudan kaynak dizinden çalıştırmak için (PowerShell / Bash):
+Run directly from source without installing (PowerShell / Bash):
 
 ```powershell
-$env:PYTHONPATH="src"; python -m excel_merge_audit.cli demo --out-dir demo_output
+$env:PYTHONPATH="src"; python -m excel_merge_audit.cli demo --lang en --out-dir demo_output
 ```
 
 ```bash
-PYTHONPATH=src python -m excel_merge_audit.cli demo --out-dir demo_output
+PYTHONPATH=src python -m excel_merge_audit.cli demo --lang en --out-dir demo_output
 ```
 
-## Kendi Dosyalarınızla Kullanım
+## Merging Your Own Files
 
-Kendi klasör ve dosyalarınızı birleştirmek için (`Hata` varsa exit code `2`):
+Merge a folder or explicit list of files in English (`--lang en`) or Turkish (`--lang tr`, default for backward compatibility). Returns exit code `2` when `--fail-on-error` is enabled and critical errors are found:
 
 ```bash
-excel-merge merge ./dosyalar -o birlesik_rapor.xlsx --json ozet.json --fail-on-error
+excel-merge merge ./files -o merged_report.xlsx --json summary.json --lang en --fail-on-error
 ```
 
-## Lisans
+Use `--sheet "Sheet1"` to target a single worksheet inside `.xlsx` workbooks, or `--keep-duplicates` to keep exact duplicates in the merged output.
+
+## 4-Sheet Workbook Architecture (`--lang en`)
+
+| Sheet Name | Contents |
+| --- | --- |
+| `Merge_Summary` | Dynamic `COUNTIF` / `SUM` formulas and zero-drift check (`Raw Gross - Removed Duplicate Gross - Clean Gross = 0.00`) |
+| `Clean_Merged` | Normalized dates, document IDs, counterparties, tax IDs, Net/VAT/Gross amounts, currency, and per-row status |
+| `Source_Files` | Per-sheet encoding, delimiter, header row index, kept/duplicate counts, and gross totals |
+| `Duplicates_and_Warnings` | Excluded exact duplicates, conflicting document groups, scientific-notation ID warnings, and formula error cells |
+
+## License
 
 [MIT](LICENSE) — Rovtal

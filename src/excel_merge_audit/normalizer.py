@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Optional
 
+from .i18n import STATUS_LABELS, t, validate_lang
 from .models import AuditIssue, NormalizedRecord, RawSheetTable
 
 
@@ -162,14 +163,15 @@ def detect_header_row(
     return best_idx, best_col_map, best_label_map
 
 
-def parse_decimal_amount(raw: str) -> tuple[Optional[Decimal], Optional[str]]:
+def parse_decimal_amount(raw: str, lang: str = "tr") -> tuple[Optional[Decimal], Optional[str]]:
     """Parse TR/EN formatted currency/number strings strictly into quantized 2-decimal Decimal."""
+    active_lang = validate_lang(lang)
     text = raw.strip()
     if not text:
         return Decimal("0.00"), None
 
     if text.startswith("#"):
-        return None, f"Excel formül hatası içeriyor ({text})"
+        return None, t(active_lang, "norm_formula_err", text=text)
 
     detected_currency: Optional[str] = None
     cur_match = CURRENCY_RE.search(text)
@@ -192,7 +194,7 @@ def parse_decimal_amount(raw: str) -> tuple[Optional[Decimal], Optional[str]]:
 
     text = text.replace("\u00a0", "").replace(" ", "")
     if not text:
-        return None, f"Geçersiz sayısal tutar ({raw})"
+        return None, t(active_lang, "norm_invalid_number", raw=raw)
 
     has_dot = "." in text
     has_comma = "," in text
@@ -231,14 +233,15 @@ def parse_decimal_amount(raw: str) -> tuple[Optional[Decimal], Optional[str]]:
             val = -val
         return val, detected_currency
     except (InvalidOperation, ValueError):
-        return None, f"Geçersiz tutar biçimi ({raw})"
+        return None, t(active_lang, "norm_invalid_amount", raw=raw)
 
 
-def parse_date_value(raw: str) -> tuple[str, Optional[str]]:
+def parse_date_value(raw: str, lang: str = "tr") -> tuple[str, Optional[str]]:
     """Normalize TR/ISO/slash date strings cleanly to YYYY-MM-DD."""
+    active_lang = validate_lang(lang)
     text = raw.strip()
     if not text:
-        return "", "Eksik tarih"
+        return "", t(active_lang, "norm_missing_date")
 
     for fmt in (
         "%Y-%m-%d",
@@ -256,7 +259,7 @@ def parse_date_value(raw: str) -> tuple[str, Optional[str]]:
         except ValueError:
             continue
 
-    return text, f"Tanınmayan tarih formatı ({text})"
+    return text, t(active_lang, "norm_unknown_date", text=text)
 
 
 def _normalize_id_token(val: str) -> str:
@@ -277,27 +280,32 @@ def _get_row_field(col_map: dict[int, str], row: list[str], canon: str) -> str:
 
 def normalize_table(
     table: RawSheetTable,
+    lang: str = "tr",
 ) -> tuple[list[NormalizedRecord], list[AuditIssue], int, dict[str, str]]:
     """Normalize a single RawSheetTable into canonical records and structured issues."""
+    active_lang = validate_lang(lang)
+    st = STATUS_LABELS[active_lang]
     issues: list[AuditIssue] = []
     header_idx, col_map, label_map = detect_header_row(table.rows)
     if header_idx < 0 or not col_map:
         issues.append(
             AuditIssue(
-                severity="Hata",
+                severity=st["error"],
                 code="BASLIK_BULUNAMADI",
                 source_file=table.source_file,
                 sheet_name=table.sheet_name,
                 source_row=1,
                 belge_no="-",
-                message="Tabloda tanınabilir sütun başlığı (Belge No, Tutar, Tarih, Taraf) bulunamadı.",
+                message=t(active_lang, "norm_missing_headers"),
             )
         )
         return [], issues, 0, {}
 
     formula_err_by_row: dict[int, list[str]] = {}
     for err_r, err_c, err_txt in table.formula_error_cells:
-        formula_err_by_row.setdefault(err_r, []).append(f"Sütun {err_c}: {err_txt}")
+        formula_err_by_row.setdefault(err_r, []).append(
+            t(active_lang, "norm_col_prefix", col=err_c, err=err_txt)
+        )
 
     records: list[NormalizedRecord] = []
     for row_idx in range(header_idx + 1, len(table.rows)):
@@ -319,12 +327,12 @@ def normalize_table(
             if v
         }
         subtotal_labels = {"toplam", "genel toplam", "ara toplam", "subtotal", "grand total", "total"}
-        _, tarih_probe_err = parse_date_value(raw_tarih)
+        _, tarih_probe_err = parse_date_value(raw_tarih, lang=active_lang)
         if (footer_tokens & subtotal_labels) and (not raw_tarih or tarih_probe_err is not None):
             continue
 
-        row_status = "Geçti"
-        belge_label = raw_belge or f"SATIR-{excel_row_num}"
+        row_status = st["pass"]
+        belge_label = raw_belge or t(active_lang, "norm_row_prefix", row=excel_row_num)
 
         def flag(
             severity: str,
@@ -345,34 +353,34 @@ def normalize_table(
                     message=msg,
                 )
             )
-            if severity == "Hata":
-                row_status = "Hata"
-            elif severity == "Uyarı" and row_status == "Geçti":
-                row_status = "Uyarı"
+            if severity == st["error"]:
+                row_status = st["error"]
+            elif severity == st["warn"] and row_status == st["pass"]:
+                row_status = st["warn"]
 
         if excel_row_num in formula_err_by_row:
             flag(
-                "Hata",
+                st["error"],
                 "FORMUL_HATASI",
-                "Kaynak hücrede Excel formül hatası mevcut: " + ", ".join(formula_err_by_row[excel_row_num]),
+                t(active_lang, "norm_cell_formula_err", details=", ".join(formula_err_by_row[excel_row_num])),
             )
 
         if raw_vergi and SCIENTIFIC_RE.match(raw_vergi):
             flag(
-                "Uyarı",
+                st["warn"],
                 "BILIMSEL_GOSTERIM_VKN",
-                f"Vergi/Kimlik numarası bilimsel gösterimle bozulmuş ({raw_vergi}).",
+                t(active_lang, "norm_sci_vkn", val=raw_vergi),
             )
         if raw_belge and SCIENTIFIC_RE.match(raw_belge):
             flag(
-                "Uyarı",
+                st["warn"],
                 "BILIMSEL_GOSTERIM_BELGE",
-                f"Belge numarası bilimsel gösterimle bozulmuş ({raw_belge}).",
+                t(active_lang, "norm_sci_doc", val=raw_belge),
             )
 
-        norm_date, date_err = parse_date_value(raw_tarih)
+        norm_date, date_err = parse_date_value(raw_tarih, lang=active_lang)
         if date_err and "tarih" in col_map.values():
-            flag("Uyarı", "TARIH_FORMAT_HATASI", date_err)
+            flag(st["warn"], "TARIH_FORMAT_HATASI", date_err)
 
         detected_currency: Optional[str] = None
 
@@ -385,9 +393,9 @@ def normalize_table(
             if not present:
                 return None, False
             val_str = _get_row_field(col_map, _row, canon)
-            val, meta = parse_decimal_amount(val_str)
+            val, meta = parse_decimal_amount(val_str, lang=active_lang)
             if val is None:
-                flag("Hata", "TUTAR_FORMAT_HATASI", f"{canon}: {meta}")
+                flag(st["error"], "TUTAR_FORMAT_HATASI", f"{canon}: {meta}")
                 return Decimal("0.00"), True
             if meta and not detected_currency:
                 detected_currency = meta
@@ -404,9 +412,17 @@ def normalize_table(
             diff = abs(expected_brut - (brut_val or Decimal("0.00")))
             if diff > Decimal("0.02"):
                 flag(
-                    "Hata",
+                    st["error"],
                     "TOPLAM_UYUMSUZLUK",
-                    f"Net ({net_val}) + KDV ({kdv_val}) = {expected_brut}, ancak Brüt Tutar {brut_val} (Fark: {diff}).",
+                    t(
+                        active_lang,
+                        "norm_total_mismatch",
+                        net=net_val,
+                        vat=kdv_val,
+                        expected=expected_brut,
+                        gross=brut_val,
+                        diff=diff,
+                    ),
                 )
         elif has_brut and not has_net and not has_kdv:
             net_val = brut_val
@@ -417,9 +433,9 @@ def normalize_table(
         brut_final = brut_val if brut_val is not None else Decimal("0.00")
 
         if not raw_belge and "belge_no" in col_map.values():
-            flag("Uyarı", "EKSIK_BELGE_NO", "Belge/Fatura numarası boş.")
+            flag(st["warn"], "EKSIK_BELGE_NO", t(active_lang, "norm_missing_doc"))
         if not raw_taraf and "taraf" in col_map.values():
-            flag("Uyarı", "EKSIK_TARAF", "Cari / Taraf unvanı boş.")
+            flag(st["warn"], "EKSIK_TARAF", t(active_lang, "norm_missing_party"))
 
         pb_final = raw_pb.upper() if raw_pb else (detected_currency or "TRY")
         id_tok = _normalize_id_token(raw_belge)

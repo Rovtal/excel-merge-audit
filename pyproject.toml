@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "excel-merge-audit"
 version = "0.1.0"
-description = "Cevrimdisi coklu Excel (.xlsx) ve CSV/TSV birlestirici, sutun esleyici, mukerrer/tutarsizlik denetcisi ve formullu Excel raporlayici."
+description = "Offline multi-Excel (.xlsx) and CSV/TSV merger, bilingual column mapper, duplicate/conflict auditor, and formula-backed Excel reporter."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
